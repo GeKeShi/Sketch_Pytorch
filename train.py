@@ -25,6 +25,10 @@ from torch.utils.tensorboard import SummaryWriter
 from conf import settings
 from utils import get_network, get_training_dataloader, get_test_dataloader, WarmUpLR, \
     most_recent_folder, most_recent_weights, last_epoch, best_acc_weights
+# sketch: import sketched_sgd
+from sketched_optimizer import SketchedSGD, SketchedSum, SketchedModel
+# sketch: set random seed
+torch.manual_seed(42)
 
 def train(epoch):
 
@@ -40,7 +44,10 @@ def train(epoch):
 
         optimizer.zero_grad()
         outputs = net(images)
-        loss = loss_function(outputs, labels)
+        loss = loss_function(outputs, labels) 
+        # to do: change the loss function to return a numpy array that with the size of batch size, the batch size is the distributed batch size.
+        # sketch: warp loss
+        loss = summer(loss)
         loss.backward()
         optimizer.step()
 
@@ -54,7 +61,7 @@ def train(epoch):
                 writer.add_scalar('LastLayerGradients/grad_norm2_bias', para.grad.norm(), n_iter)
 
         print('Training Epoch: {epoch} [{trained_samples}/{total_samples}]\tLoss: {:0.4f}\tLR: {:0.6f}'.format(
-            loss.item(),
+            loss.total_loss_mean, # sketch: loss.total_loss_mean,
             optimizer.param_groups[0]['lr'],
             epoch=epoch,
             trained_samples=batch_index * args.b + len(images),
@@ -62,12 +69,12 @@ def train(epoch):
         ))
 
         #update training loss for each iteration
-        writer.add_scalar('Train/loss', loss.item(), n_iter)
+        writer.add_scalar('Train/loss', loss.total_loss_mean, n_iter)
 
     for name, param in net.named_parameters():
         layer, attr = os.path.splitext(name)
         attr = attr[1:]
-        writer.add_histogram("{}/{}".format(layer, attr), param, epoch)
+        writer.add_histogram("{}/{}".format(layer, attr), param.grad, epoch)
 
     finish = time.time()
 
@@ -90,7 +97,7 @@ def eval_training(epoch=0, tb=True):
 
         outputs = net(images)
         loss = loss_function(outputs, labels)
-        test_loss += loss.item()
+        test_loss += (loss.mean()).item()  # sketch: change the mean loss to list loss, so the list should be average
         _, preds = outputs.max(1)
         correct += preds.eq(labels).sum()
 
@@ -118,13 +125,18 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('-net', type=str, required=True, help='net type')
     parser.add_argument('-gpu', action='store_true', default=False, help='use gpu or not')
+    parser.add_argument('-gpu_id', type=int, default=0, help='which gpu to use')
     parser.add_argument('-b', type=int, default=128, help='batch size for dataloader')
     parser.add_argument('-warm', type=int, default=1, help='warm up training phase')
     parser.add_argument('-lr', type=float, default=0.1, help='initial learning rate')
     parser.add_argument('-resume', action='store_true', default=False, help='resume training')
+    parser.add_argument('-k', type=int, default=50000, help='sparsity of topk')
     args = parser.parse_args()
 
+    # torch.cuda.set_device(args.gpu_id)
     net = get_network(args)
+    # sketch: warp net to sketch model
+    model = SketchedModel(net)
 
     #data preprocessing:
     cifar100_training_loader = get_training_dataloader(
@@ -142,9 +154,25 @@ if __name__ == '__main__':
         batch_size=args.b,
         shuffle=True
     )
+    # sketch: warp the loss function
+    """Sums a tensor s.t. gradients of the sum are sketched during backward
 
-    loss_function = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
+        Normally, the loss is computed as
+        loss = criterion(predictions, ground_truth).sum()
+        where the sum() is over the batch dimension.
+
+        In order to sketch the gradients of loss during the backward()
+        computation, replace the above with
+        summer = SketchedSum(...)
+        loss = summer(criterion(predictions, ground_truth))
+    """
+    loss_function = nn.CrossEntropyLoss(reduction='none') # sketch: set the loss reduction =None to get the loss list from each sample
+    optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9, weight_decay=0)
+    # sketch: warp optimizer
+    optimizer = SketchedSGD(optimizer, k=args.k, accumulateError=True, p1=0, p2=4)
+    # sketch: loss wrapper
+    summer = SketchedSum(optimizer, c=200, r=5, numWorkers=4, numBlocks=4)
+
     train_scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=settings.MILESTONES, gamma=0.2) #learning rate decay
     iter_per_epoch = len(cifar100_training_loader)
     warmup_scheduler = WarmUpLR(optimizer, iter_per_epoch * args.warm)
