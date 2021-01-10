@@ -1,3 +1,4 @@
+import time
 import numpy as np
 import torch
 from csvec import CSVec
@@ -211,7 +212,7 @@ class SketchedSum:
         self.method = method
 
         # used for debugging
-        self._doSlowSketching = False
+        self._doSlowSketching = True
 
         # self.modelDevice is not tested... not sure what happens if
         # the model is on the CPU
@@ -377,6 +378,8 @@ class SketchedSum:
         self.opt.zero_grad()
         self.losses[workerId].backward(retain_graph=retain_graph)
         gradVec = self._getGradVec().to(self.device)
+        
+        np.save('resnet34_grad_'+str(workerId)+'_'+str(time.time())+'.npy',gradVec.to('cpu').numpy())
         # do weight decay right away
         # divide by num_workers because the gradient is
         # summed on master instead of averaged
@@ -661,6 +664,7 @@ class SketchedSum:
             weightUpdate[self.sketchMask] = w
 
         # zero out the coords of u, v that are being updated
+        # the rest error and velocity will be added to next gradients
         for u, v in zip(self.us, self.vs):
             u[weightUpdate.nonzero()] = 0
             v[weightUpdate.nonzero()] = 0

@@ -3,3 +3,4 @@ data
 runs
 checkpoint
 .vscode
+/*.npy

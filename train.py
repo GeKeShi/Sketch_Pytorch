@@ -169,9 +169,9 @@ if __name__ == '__main__':
     loss_function = nn.CrossEntropyLoss(reduction='none') # sketch: set the loss reduction =None to get the loss list from each sample
     optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9, weight_decay=0)
     # sketch: warp optimizer
-    optimizer = SketchedSGD(optimizer, k=args.k, accumulateError=True, p1=0, p2=4)
+    optimizer = SketchedSGD(optimizer, k=args.k, accumulateError=True, p1=2, p2=4)
     # sketch: loss wrapper
-    summer = SketchedSum(optimizer, c=200, r=5, numWorkers=4, numBlocks=4)
+    summer = SketchedSum(optimizer, c=200, r=5, numWorkers=5, numBlocks=4)
 
     train_scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=settings.MILESTONES, gamma=0.2) #learning rate decay
     iter_per_epoch = len(cifar100_training_loader)
