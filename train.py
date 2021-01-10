@@ -48,6 +48,16 @@ def train(epoch):
                 writer.add_scalar('LastLayerGradients/grad_norm2_weights', para.grad.norm(), n_iter)
             if 'bias' in name:
                 writer.add_scalar('LastLayerGradients/grad_norm2_bias', para.grad.norm(), n_iter)
+        # collect grad in each step
+        grad_vector =[]
+        for name, param in net.named_parameters():
+            # layer, attr = os.path.splitext(name)
+            # attr = attr[1:]
+            # writer.add_histogram("{}/{}".format(layer, attr), param, epoch)
+            grad_vector.append(param.grad.data.view(-1).float())
+        grad_vector = torch.cat(grad_vector).to('cpu').numpy()
+        if n_iter>100 and n_iter<110:
+            np.save(args.net+'_5_'+str(n_iter)+'.npy', grad_vector)       
 
         print('Training Epoch: {epoch} [{trained_samples}/{total_samples}]\tLoss: {:0.4f}\tLR: {:0.6f}'.format(
             loss.item(),
@@ -62,14 +72,14 @@ def train(epoch):
 
         if epoch <= args.warm:
             warmup_scheduler.step()
-    grad_vector =[]
+    # grad_vector =[]
     for name, param in net.named_parameters():
         layer, attr = os.path.splitext(name)
         attr = attr[1:]
         writer.add_histogram("{}/{}".format(layer, attr), param, epoch)
-        grad_vector.append(param.grad.data.view(-1).float())
-    grad_vector = torch.cat(grad_vector).to('cpu').numpy()
-    np.save(args.net+str(batch_index)+'.npy')
+    #     grad_vector.append(param.grad.data.view(-1).float())
+    # grad_vector = torch.cat(grad_vector).to('cpu').numpy()
+    # np.save(args.net+str(epoch)+'.npy')
     finish = time.time()
 
     print('epoch {} training time consumed: {:.2f}s'.format(epoch, finish - start))
